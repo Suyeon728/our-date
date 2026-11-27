@@ -75,12 +75,54 @@ for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축
    province,region=location(addr)
    try: lat,lon=float(x.get('latitude')),float(x.get('longitude')); assert 33<lat<39 and 124<lon<132
    except: lat=lon=None
-   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|미술|갤러리|개인전|기획전|특별전|상설전|사진전|회화전|초대전'),('체험','체험|공예|만들기|원데이|클래스'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용|오페라|발레|버스킹|리사이틀|합창|국악|독주|교향악|재즈|마술')] if re.search(pat,name)), '기타 행사')
+   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|미술|갤러리|개인전|기획전|특별전|상설전|사진전|회화전|초대전'),('체험','체험|공예|만들기|원데이|클래스'),('축제','축제|페스티벌|마켓|플리마켓|팝업|빛축제'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용|오페라|발레|버스킹|리사이틀|합창|국악|독주|교향악|재즈|마술')] if re.search(pat,name)), '기타 행사')
    if not eligible(dict(category=cat,name=name)): continue
    result.append(dict(source=source,name=name,province=province,region=region,address=addr,venue=venue,start=start,end=end,lat=lat,lon=lon,category=cat,price=price,free=price in ('무료','0','0원','무료입장','무료 관람','무료관람'),time=x.get('eventStartTime') or '',url=x.get('homepageUrl') or '',phone=x.get('phoneNumber') or '',description=desc))
   statuses[source]='성공'; print(source,len(rows),'raw records;',sum(x['source']==source for x in result),'current/future records',flush=True)
  except Exception as e:
   statuses[source]='실패: 기존 자료 유지'; print(source,type(e).__name__,str(e)[:250] if isinstance(e,ValueError) and not isinstance(e,UnicodeError) else (getattr(e,'code',None) or type(getattr(e,'reason',e)).__name__),flush=True); result.extend(x for x in old['events'] if x.get('source')==source)
+# Korea Tourism Organization: nationwide event feed, using existing secret.
+source='관광공사'
+def tour_date(value):
+ v=str(value or '').strip()
+ try: return datetime.datetime.strptime(v,'%Y%m%d').date().isoformat()
+ except ValueError:
+  try: return datetime.date.fromisoformat(v).isoformat()
+  except ValueError: return ''
+try:
+ rows=[]
+ since=(datetime.date.fromisoformat(today)-datetime.timedelta(days=366)).strftime('%Y%m%d')
+ for page in range(1,101):
+  params=dict(serviceKey=urllib.parse.unquote(key),MobileOS='ETC',MobileApp='OurDate',_type='json',eventStartDate=since,pageNo=page,numOfRows=100)
+  items,total=unpack(fetch_page('https://apis.data.go.kr/B551011/KorService2/searchFestival2?'+urllib.parse.urlencode(params)))
+  rows.extend(items)
+  if len(rows)>=total: break
+  if not items: raise ValueError('Incomplete TourAPI response')
+ else: raise ValueError('TourAPI page limit')
+ for x in rows:
+  name=str(x.get('title') or '').strip(); start=tour_date(x.get('eventstartdate')); end=tour_date(x.get('eventenddate')) or start
+  if not name or not start or not end or end<today or excluded.search(name): continue
+  addr=str(x.get('addr1') or '').strip(); province,region=location(addr)
+  try:
+   lat,lon=float(x.get('mapy')),float(x.get('mapx'))
+   if not (33<=lat<39 and 124<lon<132): raise ValueError()
+  except (ValueError,TypeError): lat=lon=None
+  cat=next((c for c,pat in [('전시','전시|미술|사진전|미디어아트'),('체험','체험|공예|원데이|클래스'),('공연','공연|콘서트|음악회|연극|뮤지컬|버스킹|연주')] if re.search(pat,name)), '축제')
+  cid=str(x.get('contentid') or '')
+  result.append(dict(source=source,name=name,province=province,region=region,address=addr,venue=str(x.get('addr2') or ''),start=start,end=end,lat=lat,lon=lon,category=cat,price='',free=False,time='',url='https://korean.visitkorea.or.kr/search/search_list.do?keyword='+urllib.parse.quote(name),phone=str(x.get('tel') or ''),description='한국관광공사 관광행사 정보 · 요금 확인 필요',contentid=cid))
+ statuses[source]='성공'; print(source,len(rows),'raw records;',sum(x['source']==source for x in result),'current/future records',flush=True)
+except Exception as e:
+ statuses[source]='실패: 기존 자료 유지'; print(source,type(e).__name__,str(e)[:200] if isinstance(e,ValueError) else (getattr(e,'code',None) or type(getattr(e,'reason',e)).__name__),flush=True)
+ result.extend(x for x in old['events'] if x.get('source')==source)
+# Officially verified seasonal event supplement; expires automatically.
+if today <= '2026-12-25':
+ name='크리스마스 빌리지 부산 2026'
+ dates=[]
+ for n in range(30):
+  d=datetime.date(2026,11,26)+datetime.timedelta(days=n)
+  if d.weekday()>=3 or d>=datetime.date(2026,12,21): dates.append(d.isoformat())
+ result=[x for x in result if not ('크리스마스' in x['name'] and '빌리지' in x['name'] and ('부산' in x['name'] or x.get('province')=='부산'))]
+ result.append(dict(source='공식 일정 보완',name=name,province='부산',region='부산 해운대구',address='부산 해운대구 수영강변대로 120',venue='영화의전당 야외광장',start='2026-11-26',end='2026-12-25',dates=dates,lat=None,lon=None,category='축제',price='유료 (예매처 확인)',free=False,time='',url='https://m.ticket.yes24.com/Notice/Detail.aspx?bid=18725',phone='',description='크리스마스 마켓 · 공식 예매 공지 기준 운영일만 표시'))
 p.write_text(json.dumps(dict(updated=today,status=statuses,events=list({(x['name'],x['start'],x['region'],x['venue']):x for x in result if eligible(x)}.values())),ensure_ascii=False),encoding='utf-8')
 
 if not all(v=='성공' for v in statuses.values()): raise SystemExit('One or more event sources failed; previous records preserved')
