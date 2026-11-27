@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'jeonnam-date-v2/places.json'
+      - 'jeonnam-date-v2/events.json'
 
 permissions:
   contents: write
@@ -42,16 +43,21 @@ jobs:
       - name: Collect place data
         run: python collect.py
 
+      - name: Collect cultural events
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: python collect_events.py
+
       - name: Save database safely
         run: |
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
-          git add places.json
+          git add places.json events.json
 
           if git diff --cached --quiet; then
             echo "No database changes"
           else
-            git commit -m "Refresh place database"
+            git commit -m "Refresh databases"
             git pull --rebase origin main
             git push origin main
           fi
@@ -62,7 +68,7 @@ jobs:
       - name: Prepare website
         run: |
           mkdir -p ../public
-          cp index.html places.json manifest.json sw.js icon.png ../public/
+          cp index.html places.json events.json manifest.json sw.js icon.png ../public/
 
       - name: Upload website
         uses: actions/upload-pages-artifact@v3
