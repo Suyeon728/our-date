@@ -1,4 +1,4 @@
-import os,json,datetime,urllib.request,urllib.parse,pathlib,re,xml.etree.ElementTree as ET
+import time,socket,urllib.error,os,json,datetime,urllib.request,urllib.parse,pathlib,re,xml.etree.ElementTree as ET
 p=pathlib.Path('events.json'); old=json.loads(p.read_text()) if p.exists() else {'events':[]}; key=os.getenv('DATA_GO_KR_KEY','').strip(); today=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date().isoformat()
 if not key: raise SystemExit('DATA_GO_KR_KEY missing')
 provinces={'서울':'서울','부산':'부산','대구':'대구','인천':'인천','광주':'광주','대전':'대전','울산':'울산','세종':'세종','경기':'경기','강원':'강원','충북':'충북','충청북':'충북','충남':'충남','충청남':'충남','전북':'전북','전라북':'전북','전남':'전남','전라남':'전남','경북':'경북','경상북':'경북','경남':'경남','경상남':'경남','제주':'제주'}
@@ -7,6 +7,16 @@ def location(addr):
  province=next((v for k,v in provinces.items() if first.startswith(k)), '지역 미확인')
  parts=addr.strip().split(); city=parts[1] if len(parts)>1 and re.search(r'(시|군|구)$',parts[1]) else ''
  return province, ' '.join(filter(None,[province,city]))
+def fetch_page(url):
+ for attempt in range(4):
+  try:
+   with urllib.request.urlopen(url,timeout=45) as f: return f.read()
+  except (urllib.error.URLError,TimeoutError,ConnectionError) as e:
+   code=getattr(e,'code',None)
+   if code is not None and code not in (408,429,500,502,503,504): raise
+   print('Network retry',attempt+1,'/4', 'HTTP '+str(code) if code else type(getattr(e,'reason',e)).__name__,flush=True)
+   if attempt==3: raise
+   time.sleep(2**(attempt+1))
 def unpack(raw):
  # Support both gateway response formats and report errors without printing secrets.
  try: j=json.loads(raw)
@@ -53,7 +63,7 @@ for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축
   rows=[]
   for page in range(1,101):
    url='https://api.data.go.kr/openapi/'+endpoint+'?'+urllib.parse.urlencode(dict(serviceKey=urllib.parse.unquote(key),type='json',pageNo=page,numOfRows=1000))
-   with urllib.request.urlopen(url,timeout=45) as f: raw=f.read()
+   raw=fetch_page(url)
    items,total=unpack(raw)
    rows.extend(items)
    if len(rows)>=total: break
@@ -70,7 +80,7 @@ for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축
    result.append(dict(source=source,name=name,province=province,region=region,address=addr,venue=venue,start=start,end=end,lat=lat,lon=lon,category=cat,price=price,free=price in ('무료','0','0원','무료입장','무료 관람','무료관람'),time=x.get('eventStartTime') or '',url=x.get('homepageUrl') or '',phone=x.get('phoneNumber') or '',description=desc))
   statuses[source]='성공'; print(source,len(rows),'raw records;',sum(x['source']==source for x in result),'current/future records',flush=True)
  except Exception as e:
-  statuses[source]='실패: 기존 자료 유지'; print(source,type(e).__name__,str(e)[:250] if isinstance(e,ValueError) and not isinstance(e,UnicodeError) else getattr(e,'code',''),flush=True); result.extend(x for x in old['events'] if x.get('source')==source)
+  statuses[source]='실패: 기존 자료 유지'; print(source,type(e).__name__,str(e)[:250] if isinstance(e,ValueError) and not isinstance(e,UnicodeError) else (getattr(e,'code',None) or type(getattr(e,'reason',e)).__name__),flush=True); result.extend(x for x in old['events'] if x.get('source')==source)
 p.write_text(json.dumps(dict(updated=today,status=statuses,events=list({(x['name'],x['start'],x['region'],x['venue']):x for x in result if eligible(x)}.values())),ensure_ascii=False),encoding='utf-8')
 
 if not all(v=='성공' for v in statuses.values()): raise SystemExit('One or more event sources failed; previous records preserved')
