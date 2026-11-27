@@ -44,6 +44,9 @@ def unpack(raw):
  if total is None: raise ValueError('Missing totalCount; body fields: '+','.join(str(k)[:40] for k in b.keys())[:200])
  return items,int(total)
 
+excluded=re.compile(r'산업안전|안전보건|법정의무|직무교육|직원교육|근로자.{0,12}교육|정기교육|보수교육|교직원.{0,8}연수|사내교육|워크숍|워크샵|세미나|정기총회|이사회|간담회|회의|채용|시험|입학식|졸업식|수료식|기념식|시상식|설명회|보고회|발대식|위촉식|교육청.{0,8}연수')
+def eligible(e):
+ return e.get('category') in ('전시','공연','체험','축제') and not excluded.search(e.get('name') or '')
 result=[]; statuses={}
 for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축제','tn_pubr_public_cltur_fstvl_api')]:
  try:
@@ -62,11 +65,12 @@ for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축
    province,region=location(addr)
    try: lat,lon=float(x.get('latitude')),float(x.get('longitude')); assert 33<lat<39 and 124<lon<132
    except: lat=lon=None
-   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|미술|갤러리'),('체험','체험|공예|만들기|강좌'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용')] if re.search(pat,name)), '기타 행사')
+   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|미술|갤러리|개인전|기획전|특별전|상설전|사진전|회화전|초대전'),('체험','체험|공예|만들기|원데이|클래스'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용|오페라|발레|버스킹|리사이틀|합창|국악|독주|교향악|재즈|마술')] if re.search(pat,name)), '기타 행사')
+   if not eligible(dict(category=cat,name=name)): continue
    result.append(dict(source=source,name=name,province=province,region=region,address=addr,venue=venue,start=start,end=end,lat=lat,lon=lon,category=cat,price=price,free=price in ('무료','0','0원','무료입장','무료 관람','무료관람'),time=x.get('eventStartTime') or '',url=x.get('homepageUrl') or '',phone=x.get('phoneNumber') or '',description=desc))
   statuses[source]='성공'; print(source,len(rows),'raw records;',sum(x['source']==source for x in result),'current/future records',flush=True)
  except Exception as e:
   statuses[source]='실패: 기존 자료 유지'; print(source,type(e).__name__,str(e)[:250] if isinstance(e,ValueError) and not isinstance(e,UnicodeError) else getattr(e,'code',''),flush=True); result.extend(x for x in old['events'] if x.get('source')==source)
-p.write_text(json.dumps(dict(updated=today,status=statuses,events=list({(x['name'],x['start'],x['region'],x['venue']):x for x in result}.values())),ensure_ascii=False),encoding='utf-8')
+p.write_text(json.dumps(dict(updated=today,status=statuses,events=list({(x['name'],x['start'],x['region'],x['venue']):x for x in result if eligible(x)}.values())),ensure_ascii=False),encoding='utf-8')
 
 if not all(v=='성공' for v in statuses.values()): raise SystemExit('One or more event sources failed; previous records preserved')
