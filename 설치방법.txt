@@ -1,0 +1,16 @@
+우리 둘의 아지트 v5.1 전체 소스
+
+기존 저장소 Suyeon728/our-date 업데이트:
+1. jeonnam-date-v2 폴더 안의 index.html, collect_events.py, collect.py, sw.js, manifest.json, icon.png, README.md 파일만 선택하여 아래 주소에 업로드 후 Commit changes.
+https://github.com/Suyeon728/our-date/upload/main/jeonnam-date-v2
+주의: 폴더째 업로드하지 마세요. 기존 events.json, places.json은 보존하세요. ZIP에 포함된 DB는 신규 설치용 빈 DB입니다.
+2. .github/workflows/update.yml을 메모장으로 열어 전체 복사하고 아래 페이지의 코드를 교체 후 Commit changes.
+https://github.com/Suyeon728/our-date/edit/main/.github/workflows/update.yml
+3. Actions에서 최신 실행 확인. 이미 자동 실행되므로 Run workflow 반복 클릭 불필요.
+4. https://suyeon728.github.io/our-date/?v=5.1 접속, 강력 새로고침.
+
+신규 설치: 위 구조 그대로 저장소 루트에 배치. GitHub Pages Source=GitHub Actions. DATA_GO_KR_KEY는 Repository secret. 서울 API는 SEOUL_API_KEY 별도 secret, 부산 API 승인 후 BUSAN_ENABLED=true repository variable. 키를 코드에 넣지 마세요. 기존 인증키 노출 시 재발급 권장.
+
+장소 저장: 직접 이름/종류/지역/주소/메모 등록 또는 추천 결과에서 저장. 좌표 있는 장소는 15km 이내 후보, 좌표 없는 장소는 선택 지역 기준으로 우선 표시. 직접 추가한 장소의 주소는 지도 검색용이며 좌표 자동 검증은 하지 않습니다. 브라우저별 localStorage 사용, 백업 내보내기/불러오기로 다른 기기에서 이전 가능. 서버 동기화 없음. 브라우저 데이터 삭제 시 백업 없이 복구 불가.
+
+기존 무료 API 사용 범위 유지. TourAPI 인증 403과 서울/부산 API 실제 연결은 미검증. 일부 API 실패 시 기존 자료 유지 및 배포 후 오류 표시. 모든 민간 행사, 리뷰 수, 실제 이동/영업시간을 보장하지 않습니다. 

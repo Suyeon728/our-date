@@ -1,0 +1,86 @@
+name: Refresh places and publish
+on:
+  workflow_dispatch:
+    inputs:
+      refresh_places:
+        description: 'Also refresh cafe/library/restaurant database'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 21 * * *'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'jeonnam-date-v2/places.json'
+      - 'jeonnam-date-v2/events.json'
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: jeonnam-date-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Initialize event database if missing
+        run: test -f events.json || echo '{"events":[]}' > events.json
+      - name: Collect nationwide cultural events first
+        id: events
+        continue-on-error: true
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          SEOUL_API_KEY: ${{ secrets.SEOUL_API_KEY }}
+          BUSAN_ENABLED: ${{ vars.BUSAN_ENABLED }}
+        run: python collect_events.py
+      - name: Save event database
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add events.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh nationwide cultural events'
+            git pull --rebase origin main
+            git push origin main
+          fi
+      - uses: actions/configure-pages@v5
+      - name: Prepare website
+        run: |
+          mkdir -p ../public
+          cp index.html places.json events.json manifest.json sw.js icon.png ../public/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Deploy website
+        uses: actions/deploy-pages@v4
+      - name: Check weekly place refresh schedule
+        id: weekly
+        run: echo "day=$(TZ=Asia/Seoul date +%u)" >> "$GITHUB_OUTPUT"
+      - name: Refresh regional place database after deployment
+        if: (github.event_name == 'schedule' && steps.weekly.outputs.day == '1') || (github.event_name == 'workflow_dispatch' && inputs.refresh_places)
+        run: python collect.py
+      - name: Save refreshed places for next daily deployment
+        run: |
+          git add places.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh place database'
+            git pull --rebase origin main
+            git push origin main
+          fi
+      - name: Report event API failure
+        if: steps.events.outcome == 'failure'
+        run: |
+          echo 'Event collection failed or was partial. Check event collection log.'
+          exit 1

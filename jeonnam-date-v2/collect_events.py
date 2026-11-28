@@ -75,7 +75,7 @@ for source,endpoint in [('행사','tn_pubr_public_pblprfr_event_info_api'),('축
    province,region=location(addr)
    try: lat,lon=float(x.get('latitude')),float(x.get('longitude')); assert 33<lat<39 and 124<lon<132
    except: lat=lon=None
-   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|미술|갤러리|개인전|기획전|특별전|상설전|사진전|회화전|초대전'),('체험','체험|공예|만들기|원데이|클래스'),('축제','축제|페스티벌|마켓|플리마켓|팝업|빛축제'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용|오페라|발레|버스킹|리사이틀|합창|국악|독주|교향악|재즈|마술')] if re.search(pat,name)), '기타 행사')
+   desc=x.get('eventCo') or x.get('fstvlCo') or ''; price=str(next((x[k] for k in ('chrgeInfo','admfee','관람요금','요금정보') if k in x and x[k] not in (None,'')), '')).strip(); cat='축제' if source=='축제' else next((c for c,pat in [('전시','전시|서울라이트|미디어파사드|미술|갤러리|개인전|기획전|특별전|상설전|사진전|회화전|초대전'),('체험','체험|공예|만들기|원데이|클래스|스케이트장'),('축제','축제|페스티벌|마켓|플리마켓|팝업|빛축제|타종|빛초롱|윈터페스타|윈터페스티벌'),('공연','공연|콘서트|음악회|연극|뮤지컬|연주|무용|오페라|발레|버스킹|리사이틀|합창|국악|독주|교향악|재즈|마술')] if re.search(pat,name)), '기타 행사')
    if not eligible(dict(category=cat,name=name)): continue
    result.append(dict(source=source,name=name,province=province,region=region,address=addr,venue=venue,start=start,end=end,lat=lat,lon=lon,category=cat,price=price,free=price in ('무료','0','0원','무료입장','무료 관람','무료관람'),time=x.get('eventStartTime') or '',url=x.get('homepageUrl') or '',phone=x.get('phoneNumber') or '',description=desc))
   statuses[source]='성공'; print(source,len(rows),'raw records;',sum(x['source']==source for x in result),'current/future records',flush=True)
@@ -123,6 +123,104 @@ if today <= '2026-12-25':
   if d.weekday()>=3 or d>=datetime.date(2026,12,21): dates.append(d.isoformat())
  result=[x for x in result if not ('크리스마스' in x['name'] and '빌리지' in x['name'] and ('부산' in x['name'] or x.get('province')=='부산'))]
  result.append(dict(source='공식 일정 보완',name=name,province='부산',region='부산 해운대구',address='부산 해운대구 수영강변대로 120',venue='영화의전당 야외광장',start='2026-11-26',end='2026-12-25',dates=dates,lat=None,lon=None,category='축제',price='유료 (예매처 확인)',free=False,time='',url='https://m.ticket.yes24.com/Notice/Detail.aspx?bid=18725',phone='',description='크리스마스 마켓 · 공식 예매 공지 기준 운영일만 표시'))
+# Seasonal supplement: user-provided schedule, cross-check official Seoul notice before visiting.
+seoul_url='https://tv.seoul.go.kr/v/38e3d3d0d17e4151a1bfadaf19fa271c'
+seasonal=[
+ ('서울빛초롱축제','2026-12-11','2027-01-31','중구','청계광장~삼일교','축제','18:00~23:00','청계광장'),
+ ('청계천의 빛','2026-12-11','2026-12-31','중구','청계광장 일대','전시','18:00~22:00','청계광장'),
+ ('광화문 마켓','2026-12-11','2027-01-10','종로구','광화문광장·세종로공원','축제','17:30~23:00','광화문광장'),
+ ('서울라이트 광화문','2026-12-11','2027-01-10','종로구','광화문 및 광화문광장 북측','전시','공식 안내 확인','광화문광장'),
+ ('서울광장 스케이트장','2026-12-18','2027-02-09','중구','서울광장','체험','공식 안내 확인','서울광장'),
+ ('제야의 종 타종행사','2026-12-31','2027-01-01','종로구','보신각 일대','축제','공식 안내 확인','보신각')]
+for name,start,end,district,venue,cat,hours,place in seasonal:
+ if end<today: continue
+ norm=lambda s: re.sub(r'[^가-힣A-Za-z]','',s).lower()
+ result=[x for x in result if not (x.get('province')=='서울' and norm(name)==norm(x.get('name','')) and x.get('start','')<=end and x.get('end','')>=start)]
+ result.append(dict(source='시즌 일정 보완',name=name,province='서울',region='서울 '+district,address='서울 '+district+' '+place,venue=venue,start=start,end=end,lat=None,lon=None,category=cat,price='',free=False,time=hours,url=seoul_url,phone='',description='제공된 시즌 일정 기준 · 세부 운영 및 요금은 공식 안내 확인'))
+
+# Regional feeds: official open data, no HTML scraping or invented schedules.
+def dated(value):
+ m=re.match(r'^(\d{4})[-./]?(\d{2})[-./]?(\d{2})',str(value or '').strip())
+ if not m:return ''
+ try:return datetime.date(*map(int,m.groups())).isoformat()
+ except ValueError:return ''
+def coords(a,b):
+ try:
+  a,b=float(a),float(b)
+  if 33<=a<39 and 124<b<132:return a,b
+ except (TypeError,ValueError):pass
+ return None,None
+def region_category(name,code=''):
+ if excluded.search(name):return ''
+ for cat,pattern in [('전시','전시|미술|사진전|미디어아트|서울라이트'),('체험','체험|공예|원데이|스케이트|클래스'),('축제','축제|마켓|페스티벌|팝업|크리스마스|빛초롱'),('공연','공연|콘서트|음악|연극|뮤지컬|국악|무용|발레|오페라|연주|버스킹|클래식|독주|합창')]:
+  if re.search(pattern,name+' '+code):return cat
+ return ''
+def regional_record(source,name,province,district,venue,start,end,lat,lon,cat,price,free,url,phone='',hours='',address=''):
+ return dict(source=source,name=name,province=province,region=' '.join(filter(None,[province,district])),address=address or ' '.join(filter(None,[province,district,venue])),venue=venue,start=start,end=end,lat=lat,lon=lon,category=cat,price=price,free=free,time=hours,url=url,phone=phone,description=source+' 제공 · 세부 운영일 확인 필요')
+def seoul_records():
+ sk=os.getenv('SEOUL_API_KEY','').strip()
+ if not sk:raise RuntimeError('SEOUL_API_KEY missing')
+ rows=[]
+ for i in range(1,100001,1000):
+  # Official Seoul Open Data API uses a separate key.
+  u='http://openapi.seoul.go.kr:8088/'+urllib.parse.quote(sk,safe='')+'/json/culturalEventInfo/'+str(i)+'/'+str(i+999)
+  j=json.loads(fetch_page(u)); b=j.get('culturalEventInfo',{}); h=b.get('RESULT',j.get('RESULT',{})); code=h.get('CODE','')
+  if code!='INFO-000':raise ValueError('Seoul API code '+re.sub(r'[^A-Za-z0-9_-]','',str(code))[:30])
+  batch=b.get('row',[]); rows.extend(batch)
+  if len(rows)>=int(b['list_total_count']):break
+  if not batch:raise ValueError('Incomplete Seoul feed')
+ else:raise ValueError('Seoul page limit')
+ out=[]
+ for x in rows:
+  name=str(x.get('TITLE') or '').strip(); start=dated(x.get('STRTDATE')); end=dated(x.get('END_DATE')) or start; cat=region_category(name,str(x.get('CODENAME') or ''))
+  if not name or not cat or not start or end<today or end<start:continue
+  a,b=coords(x.get('LAT'),x.get('LOT')); venue=str(x.get('PLACE') or ''); district=str(x.get('GUNAME') or ''); price=str(x.get('USE_FEE') or ''); free=str(x.get('IS_FREE') or '').strip()=='무료' or price.strip() in ('무료','0원','0')
+  out.append(regional_record('서울문화포털',name,'서울',district,venue,start,end,a,b,cat,price,free,str(x.get('HMPG_ADDR') or x.get('ORG_LINK') or 'https://culture.seoul.go.kr/'),str(x.get('INQUIRY') or ''),str(x.get('TIME') or '')))
+ return out
+
+def busan_records():
+ rows=[]
+ for page in range(1,101):
+  u='https://apis.data.go.kr/6260000/FestivalService/getFestivalKr?'+urllib.parse.urlencode(dict(ServiceKey=urllib.parse.unquote(key),pageNo=page,numOfRows=100,resultType='json'))
+  j=json.loads(fetch_page(u)); b=j.get('getFestivalKr')
+  if isinstance(b,dict):
+   h=b.get('header',{}); code=str(h.get('code',h.get('resultCode','00')))
+   if code not in ('00','0','0000'):raise ValueError('Busan API code '+re.sub(r'[^A-Za-z0-9_-]','',code)[:30])
+   batch=b.get('item',[]); total=b.get('totalCount')
+   if isinstance(batch,dict):batch=[batch]
+   if not isinstance(batch,list) or total is None:raise ValueError('Unknown Busan response')
+   total=int(total)
+  else:batch,total=unpack(json.dumps(j).encode())
+  rows.extend(batch)
+  if len(rows)>=total:break
+  if not batch:raise ValueError('Incomplete Busan feed')
+ else:raise ValueError('Busan page limit')
+ out=[]; undated=0
+ for x in rows:
+  name=str(x.get('MAIN_TITLE') or '').strip(); period=str(x.get('USAGE_DAY') or '')
+  # Never infer the year of recurring festivals. Require explicit full dates.
+  # Normalize single-digit components separately.
+  ds=[]
+  for y,m,d in re.findall(r'(20\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월|[.\-/])\s*(\d{1,2})',period):
+   try:ds.append(datetime.date(int(y),int(m),int(d)).isoformat())
+   except ValueError:pass
+  if len(ds)!=2:undated+=1;continue
+  start,end=ds
+  if not name or end<today or end<start or excluded.search(name):continue
+  a,b=coords(x.get('LAT'),x.get('LNG')); price=str(x.get('USAGE_AMOUNT') or '')
+  out.append(regional_record('부산축제정보',name,'부산',str(x.get('GUGUN_NM') or ''),str(x.get('MAIN_PLACE') or x.get('PLACE') or ''),start,end,a,b,'축제',price,price.strip() in ('무료','0원','0'),str(x.get('HOMEPAGE_URL') or 'https://www.visitbusan.net/'),str(x.get('CNTCT_TEL') or ''),str(x.get('USAGE_DAY_WEEK_AND_TIME') or ''),'부산 '+str(x.get('ADDR1') or '')))
+ print('부산축제정보: 날짜 불명확 제외',undated,flush=True)
+ return out
+for src,fn in [('서울문화포털',seoul_records),('부산축제정보',busan_records)]:
+ if src=='서울문화포털' and not os.getenv('SEOUL_API_KEY','').strip() or src=='부산축제정보' and os.getenv('BUSAN_ENABLED','').lower()!='true':
+  statuses[src]='미연결';result.extend(x for x in old['events'] if x.get('source')==src);continue
+ try:
+  fresh=fn(); result.extend(fresh);statuses[src]='성공';print(src,len(fresh),'current/future records',flush=True)
+ except Exception as e:
+  statuses[src]='실패: 기존 자료 유지';print(src,type(e).__name__,getattr(e,'code',None) or (str(e)[:120] if isinstance(e,ValueError) else ''),flush=True);result.extend(x for x in old['events'] if x.get('source')==src)
+
+# Preserve only unexpired records, including fallback records.
+result=[x for x in result if x.get("end", "")>=today]
 p.write_text(json.dumps(dict(updated=today,status=statuses,events=list({(x['name'],x['start'],x['region'],x['venue']):x for x in result if eligible(x)}.values())),ensure_ascii=False),encoding='utf-8')
 
-if not all(v=='성공' for v in statuses.values()): raise SystemExit('One or more event sources failed; previous records preserved')
+if any(v.startswith('실패') for v in statuses.values()): raise SystemExit('One or more event sources failed; previous records preserved')
