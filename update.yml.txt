@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       refresh_places:
-        description: 'Also refresh cafe/library/restaurant database'
+        description: 'Rebuild nationwide cafe/library/restaurant database'
         type: boolean
-        default: false
+        default: true
   schedule:
     - cron: '23 21 * * *'
   push:
@@ -55,6 +55,45 @@ jobs:
             git pull --rebase origin main
             git push origin main
           fi
+      - name: Check if nationwide place database needs refresh
+        id: places_due
+        env:
+          RUN_KIND: ${{ github.event_name }}
+          FORCE_REFRESH: ${{ inputs.refresh_places }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, datetime
+          from pathlib import Path
+          try:
+              current = json.loads(Path('places.json').read_text())
+          except Exception:
+              current = {}
+          due = current.get('coverage') != 'national-osm' or not current.get('places')
+          due = due or (os.environ['RUN_KIND'] == 'schedule' and (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=9)).weekday()==0)
+          due = due or os.environ.get('FORCE_REFRESH') == 'true'
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('refresh='+str(due).lower()+'\n')
+          PYCODE
+      - name: Build nationwide offline place database
+        id: nationwide
+        if: steps.places_due.outputs.refresh == 'true'
+        continue-on-error: true
+        timeout-minutes: 35
+        run: |
+          python -m pip install 'osmium>=4,<5' 'shapely>=2,<3'
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 600 'https://download.geofabrik.de/asia/south-korea-latest.osm.pbf' -o "$RUNNER_TEMP/korea.osm.pbf"
+          python collect.py "$RUNNER_TEMP/korea.osm.pbf"
+      - name: Save nationwide place database
+        if: steps.nationwide.outcome == 'success'
+        run: |
+          git add places.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh national OSM place database'
+            git pull --rebase origin main
+            git push origin main
+          fi
+      - name: Report place database failure
+        if: steps.nationwide.outcome == 'failure'
+        run: echo '::warning::Nationwide place refresh failed. Previous place database retained.'
       - uses: actions/configure-pages@v5
       - name: Prepare website
         run: |
@@ -65,22 +104,13 @@ jobs:
           path: public
       - name: Deploy website
         uses: actions/deploy-pages@v4
-      - name: Check weekly place refresh schedule
-        id: weekly
-        run: echo "day=$(TZ=Asia/Seoul date +%u)" >> "$GITHUB_OUTPUT"
-      - name: Refresh regional place database after deployment
-        if: (github.event_name == 'schedule' && steps.weekly.outputs.day == '1') || (github.event_name == 'workflow_dispatch' && inputs.refresh_places)
-        run: python collect.py
-      - name: Save refreshed places for next daily deployment
-        run: |
-          git add places.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Refresh place database'
-            git pull --rebase origin main
-            git push origin main
-          fi
       - name: Report event API failure
         if: steps.events.outcome == 'failure'
         run: |
           echo 'Event collection failed or was partial. Check event collection log.'
+          exit 1
+      - name: Check national place update outcome
+        if: always() && steps.nationwide.outcome == 'failure'
+        run: |
+          echo 'Nationwide place database could not be refreshed; check Build nationwide offline place database.'
           exit 1
